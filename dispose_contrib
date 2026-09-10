@@ -2,15 +2,10 @@
 set -euo pipefail
 
 SCRIPT_NAME="${0##*/}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-log() {
-  printf '==> %s\n' "$*" >&2
-}
-
-die() {
-  printf 'Error: %s\n' "$*" >&2
-  exit 1
-}
+# shellcheck source=_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
 
 usage() {
   cat >&2 <<EOF
@@ -34,10 +29,6 @@ Optional:
 EOF
 }
 
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || die "required command '$1' not found on PATH."
-}
-
 main() {
   local module=""
   local target_dir=""
@@ -53,16 +44,10 @@ main() {
   done
 
   [[ -n "$module" ]] || { log "--m is required"; usage; exit 2; }
-  [[ "$module" =~ ^[a-z][a-z0-9_]*$ ]] \
-    || die "--m '$module' doesn't look like a Drupal machine name (lowercase letters, digits, underscores, starting with a letter)."
+  validate_machine_name "--m" "$module"
 
   if [[ -n "$target_dir" ]]; then
-    # A leading ~ in --dir=~/path isn't expanded by the shell (it's not at
-    # the start of the whole word), so expand it ourselves.
-    case "$target_dir" in
-      "~") target_dir="$HOME" ;;
-      "~/"*) target_dir="$HOME/${target_dir#"~/"}" ;;
-    esac
+    target_dir="$(expand_tilde "$target_dir")"
     [[ -d "$target_dir" ]] || die "$target_dir does not exist."
     target_dir="$(cd "$target_dir" && pwd)"
   fi
@@ -70,7 +55,7 @@ main() {
   if [[ -n "$target_dir" ]]; then
     contribs_dir="$target_dir"
   else
-    contribs_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    contribs_dir="$SCRIPT_DIR"
   fi
   module_dir="$contribs_dir/$module"
 

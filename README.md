@@ -1,91 +1,120 @@
 # ddev-contrib-ez
 
-A script that sets up a local DDEV site for a Drupal contrib module. It's a
-wrapper around the
-[`ddev-drupal-contrib`](https://github.com/ddev/ddev-drupal-contrib) add-on.
+**A simple script that sets up a local DDEV site for a Drupal contrib module.**
 
-This is for throwaway environments, not production sites. If you just want
-to poke at a contrib module, try out a feature, or reproduce an issue before
-filing it, this gets you a running site fast without setting any of it up by
-hand. You don't need to know Drupal internals, DDEV, or shell scripting to
-use it, just follow the steps below.
+`ddev-contrib-ez` is a small wrapper around the
+[`ddev-drupal-contrib`](https://github.com/ddev/ddev-drupal-contrib) add-on
+that automates the Drupal-specific setup needed to try out a contrib module
+locally.
+
+It is designed for **throwaway development environments**, not production
+sites. Use it when you want to quickly explore a contrib module, test a
+feature, or reproduce an issue before filing it, without having to set
+everything up by hand.
 
 ## Requirements
 
-- [DDEV](https://ddev.com), which needs Docker. DDEV's own install guide
-  covers installing Docker too if you don't have it.
-- `git`, usually already on your machine. Check with `git --version` in a
-  terminal.
+* [DDEV](https://ddev.com/) — DDEV uses Docker to run the local site. See
+  [DDEV's installation guide](https://ddev.com/get-started/) if you haven't
+  installed it yet.
+* `git` — usually already installed. Check with:
 
-## Step by step
+  ```bash
+  git --version
+  ```
 
-This walks through getting a working site for the `webform` module from a
-blank machine.
+## Quick start
 
-1. Install [DDEV](https://ddev.com/get-started/) (link above). DDEV runs a
-   local Drupal site inside Docker containers, so you don't have to install
-   PHP, a database, or anything else by hand.
+The following example sets up a local Drupal site for the `webform` module.
 
-2. Get this repo:
+### 1. Clone this repository
 
-   ```
-   git clone https://github.com/rodzy03/ddev-contrib-ez.git
-   cd ddev-contrib-ez
-   ```
+```bash
+git clone https://github.com/rodzy03/ddev-contrib-ez.git
+cd ddev-contrib-ez
+```
 
-3. Run the setup script, telling it which module you want and which
-   version of Drupal core to build the site on:
+### 2. Set up a contrib module
 
-   ```
-   ./setup_contrib --mn=webform --cv=^11.2
-   ```
+Run `setup_contrib` with the module's machine name and the Drupal core
+version you want to use:
 
-   `--mn` is the module's machine name, the short lowercase name in its
-   drupal.org project URL (`drupal.org/project/webform` → `webform`).
-   `--cv` is a Drupal core version constraint, `^11.2` means "11.2 or any
-   later 11.x release."
+```bash
+./setup_contrib --mn=webform --cv=^11.2
+```
 
-   The script downloads the `webform` module, builds a Drupal site around
-   it, and installs the site. The first run takes a few minutes, Docker
-   images and composer dependencies have to download.
+Where:
 
-4. When it finishes, open the site in your browser:
+* `--mn` is the module's **machine name**, as used by the module on
+  [drupal.org](https://www.drupal.org/).
+* `--cv` is the **Drupal core version constraint** to use for the test site,
+  such as `^11.2`.
 
-   ```
-   ddev launch
-   ```
+The script will:
 
-   Log in with username `admin`, password `admin`. The `webform` module is
-   already enabled and ready to try.
+1. Download the contrib module.
+2. Create the DDEV project.
+3. Set up the Drupal dependencies.
+4. Build and install Drupal.
+5. Enable the contrib module.
 
-5. When you're done and want the disk space and containers back, remove
-   everything the script created:
+When it finishes, you'll have a running Drupal site with the module ready to
+test.
 
-   ```
-   ./dispose_contrib --m=webform
-   ```
+### 3. Log in
 
-   It asks you to type `webform` again to confirm, then deletes the DDEV
-   project and the module's files. This can't be undone.
+Use the default development account:
 
-That's the whole workflow: `setup_contrib` to spin a module up,
-`dispose_contrib` to tear it back down. See [Documentation](#documentation)
-below for more specific cases, a different module, extra dependencies, an
-unmerged add-on branch, and how it all works under the hood.
+```text
+Username: admin
+Password: admin
+```
+
+The requested contrib module is already enabled.
+
+### 4. Tear it down
+
+When you're finished, remove the test environment and its files:
+
+```bash
+./dispose_contrib --m=webform
+```
+
+You'll be asked to type `webform` again to confirm. The script then removes
+the DDEV project and the module's files.
+
+**This is permanent and cannot be undone.**
+
+That's the whole workflow:
+
+```text
+setup_contrib  →  try the module  →  dispose_contrib
+```
 
 ## Documentation
 
-- [How it works](docs/how-it-works.md), what the add-on sets up versus what
-  `setup_contrib` layers on top, and how the workspace is laid out.
-- [Reference](docs/reference.md), full `setup_contrib`/`dispose_contrib`
-  flags, getting just the scripts without cloning the repo, and running the
-  tests.
-- [Advanced examples: overrides/](docs/advanced-example.md), extra composer
-  packages for a module, and custom `.ddev/web-build/` files like a
-  `pre.Dockerfile` or a CA cert.
-- [overrides/README.md](overrides/README.md), how the local, gitignored
-  `overrides/` folder is laid out.
+For more specific use cases and details:
+
+* [How it works](docs/how-it-works.md) — what `ddev-drupal-contrib` sets up,
+  what `setup_contrib` adds on top, and how the workspace is structured.
+* [Reference](docs/reference.md) — complete `setup_contrib` and
+  `dispose_contrib` options, using the scripts without cloning the repository,
+  and running the test suite.
+* [Advanced examples](docs/advanced-example.md) — adding Composer
+  dependencies, using an unmerged add-on branch, and customizing
+  `.ddev/web-build/` with files such as `pre.Dockerfile` or a CA certificate.
+* [Local overrides](overrides/README.md) — how to use the gitignored
+  `overrides/` directory for local customizations.
+
+## Why use this?
+
+The `ddev-drupal-contrib` add-on provides the foundation for working with
+Drupal contrib projects in DDEV. `ddev-contrib-ez` adds the remaining
+Drupal-specific setup needed to turn that environment into a ready-to-use
+test site.
+
+The goal is simple: **clone, run one command, and start testing.**
 
 ## License
 
-MIT, see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE).
