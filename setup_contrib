@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_NAME="${0##*/}"
+ALLOWED_PLUGINS=(php-http/discovery tbachert/spi phpstan/extension-installer symfony/runtime drupal/core-composer-scaffold composer/installers dealerdirect/phpcodesniffer-composer-installer cweagans/composer-patches)
+DEFAULT_ADDON_SOURCE="ddev/ddev-drupal-contrib"
+
+log() {
+  printf '==> %s\n' "$*" >&2
+}
+
+die() {
+  printf 'Error: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<EOF
+Usage:  $SCRIPT_NAME --mn=<name> [--cv=<constraint>] [options]
+        $SCRIPT_NAME --mn=my_module --cv=^11.2
+        $SCRIPT_NAME --mn=ai_context --si
+        $SCRIPT_NAME --mn=my_module --cv=^11.2 --dir=~/your/project/dir
+        $SCRIPT_NAME --mn=ai_context --cv=^11.2 --si
+        $SCRIPT_NAME --mn=my_module --cv=^11.2 --as=https://github.com/<username>/ddev-drupal-contrib/tarball/GH-XXX
+        $SCRIPT_NAME --mn=ai_context --cv=^11.2 --pn=ai-context-scratch --dir=~/your/project/dir
+
+  Required:
+    --mn=<name>        Drupal contrib module machine name. Cloned
+                       automatically from
+                       https://git.drupalcode.org/project/<name>.git if it
+                       doesn't already exist next to this script. Already
+                       have it cloned (a fork, a branch, a patched
+                       checkout)? Put it there yourself first and this
+                       script leaves it alone.
+
+  Optional:
+    --cv=<constraint>  Drupal core version constraint, e.g. ^11.2. Required
+                       the first time you set up a module. On a rerun
+                       against a project that already exists, this can be
+                       left out.
+
+    --as=<source>      Source passed straight through to 'ddev add-on get'.
+                       Defaults to "$DEFAULT_ADDON_SOURCE". A tarball URL
+                       can be used to try an unmerged branch/PR. On a rerun
+                       against a project that already has the add-on
+                       installed, this is skipped unless --as is given, to
+                       keep reruns fast.
+
+    --si               Skip 'drush site:install' and 'drush pm:enable', for
+                       rerunning against a project that already has a site
+                       installed (site:install would otherwise wipe its
+                       existing database).
+
+    --pn=<name>        DDEV project name. Defaults to whatever 'ddev config'
+                       derives from the module directory name.
+
+    --dir=<path>       Directory to clone/look for the module in, instead of
+                       the directory this script is sitting in. Must already
+                       exist. Only affects where the module's code and DDEV
+                       project live, not where overrides/ is read from, see
+                       below.
+
+    If overrides/<module-name>/other-modules.txt exists, its lines are
+    required as extra composer packages before dependencies are installed.
+    Blank lines and lines starting with # are ignored.
+
+    If overrides/<module-name>/web-build/ exists, everything in it is copied
+    into the project's .ddev/web-build/ before 'ddev start', for a
+    pre.Dockerfile, a CA cert to trust, or anything else DDEV's own web image
+    customization picks up from there.
+
+    Rerunning against a project that's already set up skips the add-on
+    install, the drupal.org composer repository, and composer plugin
+    approval, all no-ops at that point, so it doesn't re-fetch or
+    reconfigure things that are already in place. 'ddev poser' and
+    other-modules.txt still run every time, so new entries there are picked
+    up on a rerun.
+
+EOF
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "required command '$1' not found on PATH."
+}
+
+# Literal-string check against composer.json's own text, same idiom as the drush and
+# plugin-approval idempotency checks below. A blank constraint just checks the package
+# is declared at all (no version was pinned in other-modules.txt to compare against).
+requirement_satisfied() {
+  local package="$1" constraint="$2"
+  [[ -f composer.json ]] || return 1
+  if [[ -n "$constraint" ]]; then
+    grep -qF "\"$package\": \"$constraint\"" composer.json
+  else
+    grep -qF "\"$package\":" composer.json
+  fi
+}
+
+# Sets CORE_MAJOR globally so die() here aborts the whole script, not just a subshell.
+resolve_core_major() {
+  local core_version="$1"
+  if [[ "$core_version" =~ ([0-9]+) ]]; then
+    CORE_MAJOR="${BASH_REMATCH[1]}"
+  else
+    die "could not parse a major version number out of '$core_version'."
+  fi
+}
+
+# Drush 13 covers core 10.4+ and 11; other majors are paired per Drush's own composer.json conflict constraints.
+resolve_drush_constraint() {
+  local core_major="$1"
+  case "$core_major" in
+    8)  DRUSH_CONSTRAINT="^10" ;;
+    9)  DRUSH_CONSTRAINT="^11" ;;
+    10) DRUSH_CONSTRAINT="^13" ;;
+    11) DRUSH_CONSTRAINT="^13" ;;
+    12) DRUSH_CONSTRAINT="^14" ;;
+    *)  die "no known Drush mapping for Drupal core major version '$core_major'." ;;
+  esac
+}
+
+main() {
+  local skip_install=false
+  local module=""
+  local core_version=""
+  local addon_source="$DEFAULT_ADDON_SOURCE"
+  local project_name=""
+  local target_dir=""
+  local addon_source_explicit=false
+  local script_dir contribs_dir module_dir other_modules_file other_webbuild_dir plugin drush_declared requirement
+  local req_package req_constraint
+  local env_file env_line other_module_name vendor_existed_before_start
+  local webbuild_src webbuild_rel webbuild_dest
+  local other_module_names=()
+
+  for arg in "$@"; do
+    case "$arg" in
+      --mn=*) module="${arg#--mn=}" ;;
+      --cv=*) core_version="${arg#--cv=}" ;;
+      --as=*) addon_source="${arg#--as=}"; addon_source_explicit=true ;;
+      --si) skip_install=true ;;
+      --pn=*) project_name="${arg#--pn=}" ;;
+      --dir=*) target_dir="${arg#--dir=}" ;;
+      -h|--help) usage; exit 0 ;;
+      *) log "unrecognized argument '$arg'"; usage; exit 2 ;;
+    esac
+  done
+
+  [[ -n "$module" ]] || { log "--mn is required"; usage; exit 2; }
+  [[ "$module" =~ ^[a-z][a-z0-9_]*$ ]] \
+    || die "--mn '$module' doesn't look like a Drupal machine name (lowercase letters, digits, underscores, starting with a letter)."
+
+  if [[ -n "$target_dir" ]]; then
+    # A leading ~ in --dir=~/path isn't expanded by the shell (it's not at
+    # the start of the whole word), so expand it ourselves.
+    case "$target_dir" in
+      "~") target_dir="$HOME" ;;
+      "~/"*) target_dir="$HOME/${target_dir#"~/"}" ;;
+    esac
+    [[ -d "$target_dir" ]] || die "$target_dir does not exist."
+    target_dir="$(cd "$target_dir" && pwd)"
+  fi
+
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -n "$target_dir" ]]; then
+    contribs_dir="$target_dir"
+  else
+    contribs_dir="$script_dir"
+  fi
+  module_dir="$contribs_dir/$module"
+  other_modules_file="$script_dir/overrides/$module/other-modules.txt"
+  other_webbuild_dir="$script_dir/overrides/$module/web-build"
+
+  if [[ -z "$core_version" ]]; then
+    env_file="$module_dir/.ddev/.env.web"
+    if [[ -f "$env_file" ]]; then
+      while IFS= read -r env_line || [[ -n "$env_line" ]]; do
+        [[ "$env_line" == DRUPAL_CORE=* ]] && core_version="${env_line#DRUPAL_CORE=}"
+      done < "$env_file"
+    fi
+    if [[ -n "$core_version" ]]; then
+      log "[$module] --cv not given, reusing DRUPAL_CORE=$core_version from a previous run"
+    else
+      log "--cv is required the first time, no existing project found at $module_dir to infer it from"
+      usage
+      exit 2
+    fi
+  fi
+
+  resolve_core_major "$core_version"
+  resolve_drush_constraint "$CORE_MAJOR"
+
+  require_cmd ddev
+  require_cmd git
+
+  if [[ ! -d "$module_dir" ]]; then
+    log "[$module] cloning from https://git.drupalcode.org/project/$module.git"
+    if ! git clone "https://git.drupalcode.org/project/$module.git" "$module_dir"; then
+      rm -rf "$module_dir"
+      die "could not clone '$module' from drupal.org. If it's a sandbox, a private module, or hosted somewhere else, clone it into $module_dir yourself and rerun."
+    fi
+  fi
+
+  cd "$module_dir"
+
+  log "[$module] ddev config"
+  if [[ -n "$project_name" ]]; then
+    ddev config --project-type="drupal$CORE_MAJOR" --docroot=web --project-name="$project_name"
+  else
+    ddev config --project-type="drupal$CORE_MAJOR" --docroot=web
+  fi
+
+  if [[ -d .ddev/addon-metadata/ddev-drupal-contrib ]] && ! "$addon_source_explicit"; then
+    log "[$module] ddev-drupal-contrib add-on already installed, skipping (pass --as to force a refetch)"
+  else
+    log "[$module] adding ddev-drupal-contrib add-on from $addon_source"
+    ddev add-on get "$addon_source"
+  fi
+
+  if [[ -d "$other_webbuild_dir" ]]; then
+    mkdir -p .ddev/web-build
+    while IFS= read -r -d '' webbuild_src; do
+      webbuild_rel="${webbuild_src#"$other_webbuild_dir"/}"
+      webbuild_dest=".ddev/web-build/$webbuild_rel"
+      if [[ -f "$webbuild_dest" ]] && cmp -s "$webbuild_src" "$webbuild_dest"; then
+        continue
+      fi
+      log "[$module] copying web-build file $webbuild_rel from $other_webbuild_dir"
+      mkdir -p "$(dirname "$webbuild_dest")"
+      cp -p "$webbuild_src" "$webbuild_dest"
+    done < <(find "$other_webbuild_dir" -type f -print0)
+  fi
+
+  echo "DRUPAL_CORE=$core_version" > .ddev/.env.web
+
+  vendor_existed_before_start=false
+  [[ -f vendor/autoload.php ]] && vendor_existed_before_start=true
+
+  log "[$module] starting ddev"
+  ddev start
+
+  if [[ -f composer.json ]] && grep -qF 'packages.drupal.org' composer.json; then
+    log "[$module] drupal.org package repository already configured, skipping"
+  else
+    log "[$module] adding drupal.org package repository"
+    ddev composer config repositories.drupal composer https://packages.drupal.org/8
+  fi
+
+  log "[$module] pre-approving composer plugins"
+  for plugin in "${ALLOWED_PLUGINS[@]}"; do
+    if [[ -f composer.json ]] && grep -qF "\"$plugin\": true" composer.json; then
+      continue
+    fi
+    ddev composer config "allow-plugins.$plugin" true
+  done
+
+  drush_declared=false
+  if [[ -f composer.json ]] && grep -q '"drush/drush"' composer.json; then
+    drush_declared=true
+  fi
+
+  if "$drush_declared"; then
+    log "[$module] drush/drush already declared in composer.json, leaving it to ddev poser"
+  else
+    log "[$module] adding drush:$DRUSH_CONSTRAINT to require-dev (resolved together by ddev poser)"
+    ddev composer require --dev --no-update --quiet "drush/drush:$DRUSH_CONSTRAINT" --no-interaction
+  fi
+
+  if [[ -f "$other_modules_file" ]]; then
+    log "[$module] adding extra composer dependencies from $other_modules_file"
+    while IFS= read -r requirement || [[ -n "$requirement" ]]; do
+      requirement="${requirement%%#*}"
+      requirement="${requirement#"${requirement%%[![:space:]]*}"}"
+      requirement="${requirement%"${requirement##*[![:space:]]}"}"
+      [[ -z "$requirement" ]] && continue
+
+      req_package="${requirement%%:*}"
+      req_constraint=""
+      [[ "$requirement" == *:* ]] && req_constraint="${requirement#*:}"
+
+      if requirement_satisfied "$req_package" "$req_constraint"; then
+        log "[$module] $requirement already in composer.json, skipping"
+      else
+        log "[$module] requiring $requirement"
+        ddev composer require --no-update --quiet "$requirement" --no-interaction
+      fi
+
+      if [[ "$requirement" == drupal/* ]]; then
+        other_module_name="${requirement#drupal/}"
+        other_module_name="${other_module_name%%:*}"
+        other_module_names+=("$other_module_name")
+      fi
+    done < "$other_modules_file"
+  fi
+
+  log "[$module] installing dependencies"
+  ddev poser
+
+  if "$vendor_existed_before_start"; then
+    log "[$module] vendor/ already existed, the add-on's post-start hook already symlinked the project"
+  else
+    ddev symlink-project
+  fi
+  ddev config --update
+
+  if "$skip_install"; then
+    log "[$module] --si set, leaving existing site install and enabled modules untouched"
+  else
+    log "[$module] installing Drupal site"
+    ddev drush site:install standard --site-name="$module" --account-name=admin --account-pass=admin -y
+    ddev drush cr
+
+    log "[$module] enabling module"
+    ddev drush pm:enable "$module" -y
+    ddev drush cr
+  fi
+
+  if [[ ${#other_module_names[@]} -gt 0 ]]; then
+    log "[$module] enabling modules from other-modules.txt"
+    for other_module_name in "${other_module_names[@]}"; do
+      ddev drush pm:enable "$other_module_name" -y \
+        || log "[$module] could not enable '$other_module_name' (machine name may not match the composer package, or it's not a module), skipping"
+    done
+    ddev drush cr
+  fi
+
+  log "[$module] done"
+  ddev describe
+}
+
+main "$@"

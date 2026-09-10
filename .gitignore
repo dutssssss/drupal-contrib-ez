@@ -1,0 +1,10 @@
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/setup_contrib
+!/dispose_contrib
+!/overrides
+!/tests
+!/docs
+.DS_Store
