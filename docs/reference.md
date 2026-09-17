@@ -70,15 +70,15 @@ on your machine that happens to share the same name is untouched, even if
 it's currently running.
 
 ```
-dispose_contrib --m=<name> [options]
+dispose_contrib --mn=<name> [options]
 
-  e.g.: dispose_contrib --m=contrib_module_name
-        dispose_contrib --m=contrib_module_name --dir=~/sites/projects/contribs
+  e.g.: dispose_contrib --mn=contrib_module_name
+        dispose_contrib --mn=contrib_module_name --dir=~/sites/projects/contribs
 ```
 
 | Flag           | Required | Description                                            |
 |----------------|----------|-------------------------------------------------------|
-| `--m=<name>`   | Yes      | Module name, the same one passed to `setup_contrib`'s `--mn`. |
+| `--mn=<name>`   | Yes      | Module name, the same one passed to `setup_contrib`'s `--mn`. |
 | `--dir=<path>` | No       | Directory the module is in, if you ran `setup_contrib` with `--dir`. Defaults to the directory this script is sitting in. Must already exist. Supports a leading `~`. |
 
 This is permanent. There's no `--yes` to skip the prompt.

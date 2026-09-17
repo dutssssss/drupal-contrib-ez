@@ -12,72 +12,34 @@ readonly DEFAULT_ADDON_SOURCE="ddev/ddev-drupal-contrib"
 
 usage() {
   cat >&2 <<EOF
-Usage:  $SCRIPT_NAME --mn=<name> [--cv=<constraint>] [options]
-        $SCRIPT_NAME --mn=my_module --cv=^11.2
+Usage: $SCRIPT_NAME --mn=<name> [--cv=<constraint>] [options]
+
+  e.g.: $SCRIPT_NAME --mn=my_module --cv=^11.2
         $SCRIPT_NAME --mn=ai_context --si
-        $SCRIPT_NAME --mn=my_module --cv=^11.2 --dir=~/your/project/dir
-        $SCRIPT_NAME --mn=ai_context --cv=^11.2 --si
-        $SCRIPT_NAME --mn=my_module --cv=^11.2 --as=https://github.com/<username>/ddev-drupal-contrib/tarball/GH-XXX
-        $SCRIPT_NAME --mn=ai_context --cv=^11.2 --pn=ai-context-scratch --dir=~/your/project/dir
 
-  Required:
-    --mn=<name>        Drupal contrib module machine name. Cloned
-                       automatically from
-                       https://git.drupalcode.org/project/<name>.git if it
-                       doesn't already exist next to this script. Already
-                       have it cloned (a fork, a branch, a patched
-                       checkout)? Put it there yourself first and this
-                       script leaves it alone.
+Required:
+  --mn=<name>        Drupal contrib module machine name. Cloned from
+                     drupal.org if not already present next to this script.
 
-  Optional:
-    --cv=<constraint>  Drupal core version constraint, e.g. ^11.2. Required
-                       the first time you set up a module. On a rerun
-                       against a project that already exists, this can be
-                       left out.
+Optional:
+  --cv=<constraint>  Core version constraint, e.g. ^11.2. Required on first
+                     run; on a rerun it's read back from .env.web.
+  --as=<source>      Source for 'ddev add-on get'. Defaults to
+                     "$DEFAULT_ADDON_SOURCE". Skipped on rerun unless given.
+  --si               Skip site:install/pm:enable, for rerunning against a
+                     project that already has a site (avoids wiping the DB).
+  --pn=<name>        DDEV project name. Defaults to whatever 'ddev config'
+                     derives from the module directory name.
+  --dir=<path>       Directory to clone/look for the module in, instead of
+                     next to this script. Must already exist.
 
-    --as=<source>      Source passed straight through to 'ddev add-on get'.
-                       Defaults to "$DEFAULT_ADDON_SOURCE". A tarball URL
-                       can be used to try an unmerged branch/PR. On a rerun
-                       against a project that already has the add-on
-                       installed, this is skipped unless --as is given, to
-                       keep reruns fast.
-
-    --si               Skip 'drush site:install' and 'drush pm:enable', for
-                       rerunning against a project that already has a site
-                       installed (site:install would otherwise wipe its
-                       existing database).
-
-    --pn=<name>        DDEV project name. Defaults to whatever 'ddev config'
-                       derives from the module directory name.
-
-    --dir=<path>       Directory to clone/look for the module in, instead of
-                       the directory this script is sitting in. Must already
-                       exist. Only affects where the module's code and DDEV
-                       project live, not where overrides/ is read from, see
-                       below.
-
-    If overrides/<module-name>/other-modules.txt exists, its lines are
-    required as extra composer packages before dependencies are installed.
-    Blank lines and lines starting with # are ignored.
-
-    If overrides/<module-name>/web-build/ exists, everything in it is copied
-    into the project's .ddev/web-build/ before 'ddev start', for a
-    pre.Dockerfile, a CA cert to trust, or anything else DDEV's own web image
-    customization picks up from there.
-
-    Rerunning against a project that's already set up skips the add-on
-    install, the drupal.org composer repository, and composer plugin
-    approval, all no-ops at that point, so it doesn't re-fetch or
-    reconfigure things that are already in place. 'ddev poser' and
-    other-modules.txt still run every time, so new entries there are picked
-    up on a rerun.
-
+overrides/<module>/other-modules.txt and web-build/ are picked up
+automatically. See docs/reference.md and overrides/README.md for details.
 EOF
 }
 
-# Literal-string check against composer.json's own text, same idiom as the drush and
-# plugin-approval idempotency checks below. A blank constraint just checks the package
-# is declared at all (no version was pinned in other-modules.txt to compare against).
+# Same literal-string idempotency idiom as the drush and plugin-approval checks
+# below. A blank constraint just checks the package is declared at all.
 requirement_satisfied() {
   local package="$1" constraint="$2"
   [[ -f composer.json ]] || return 1

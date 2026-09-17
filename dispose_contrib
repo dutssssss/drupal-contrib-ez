@@ -9,17 +9,17 @@ source "$SCRIPT_DIR/_lib.sh"
 
 usage() {
   cat >&2 <<EOF
-Usage: $SCRIPT_NAME --m=<name> [options]
+Usage: $SCRIPT_NAME --mn=<name> [options]
 
-  e.g.: $SCRIPT_NAME --m=my_module
-        $SCRIPT_NAME --m=my_module --dir=~/your/project/dir
+  e.g.: $SCRIPT_NAME --mn=my_module
+        $SCRIPT_NAME --mn=my_module --dir=~/your/project/dir
 
 Permanently deletes the DDEV project and the module directory for <name>,
 everything setup_contrib created for it. Asks for confirmation first. This
 cannot be undone.
 
 Required:
-  --m=<name>    Drupal contrib module machine name, the same one passed to
+  --mn=<name>   Drupal contrib module machine name, the same one passed to
                 setup_contrib's --mn.
 
 Optional:
@@ -36,15 +36,15 @@ main() {
 
   for arg in "$@"; do
     case "$arg" in
-      --m=*) module="${arg#--m=}" ;;
+      --mn=*) module="${arg#--mn=}" ;;
       --dir=*) target_dir="${arg#--dir=}" ;;
       -h|--help) usage; exit 0 ;;
       *) log "unrecognized argument '$arg'"; usage; exit 2 ;;
     esac
   done
 
-  [[ -n "$module" ]] || { log "--m is required"; usage; exit 2; }
-  validate_machine_name "--m" "$module"
+  [[ -n "$module" ]] || { log "--mn is required"; usage; exit 2; }
+  validate_machine_name "--mn" "$module"
 
   if [[ -n "$target_dir" ]]; then
     target_dir="$(expand_tilde "$target_dir")"
@@ -69,9 +69,8 @@ main() {
   [[ "$confirmation" == "$module" ]] || die "confirmation did not match, aborting."
 
   if [[ -d "$module_dir/.ddev" ]]; then
-    # cd into module_dir so ddev acts on the project defined by its own
-    # .ddev/config.yaml, never a name lookup that could match an unrelated
-    # project elsewhere on the machine with the same name.
+    # cd into module_dir so ddev acts on its own .ddev/config.yaml, not a name
+    # lookup that could match an unrelated project elsewhere.
     require_cmd ddev
     log "[$module] deleting DDEV project"
     (cd "$module_dir" && ddev delete --omit-snapshot -y) \

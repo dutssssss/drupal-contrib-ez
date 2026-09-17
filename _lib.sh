@@ -20,13 +20,11 @@ validate_machine_name() {
     || die "$flag '$value' doesn't look like a Drupal machine name (lowercase letters, digits, underscores, starting with a letter)."
 }
 
-# Expands a leading ~ or ~/ in a --dir=-style path argument. Bash only expands
-# a bare ~ when it's at the very start of an unquoted word, so --dir=~/foo is
-# never expanded by the shell itself; do it by hand here instead.
+# Bash only expands a bare ~ at the start of an unquoted word, so --dir=~/foo
+# never gets expanded by the shell itself; expand it by hand here.
 expand_tilde() {
   local path="$1"
-  # The ~/ pattern below is a case match against a literal string, not a
-  # shell expansion, so shellcheck's "tilde doesn't expand in quotes" warning
+  # Case match against a literal string, not a shell expansion, so SC2088
   # doesn't apply here.
   # shellcheck disable=SC2088
   case "$path" in

@@ -49,6 +49,8 @@ Where:
   [drupal.org](https://www.drupal.org/).
 * `--cv` is the **Drupal core version constraint** to use for the test site,
   such as `^11.2`.
+* `--dir` (optional) is the directory to clone/look for the module in,
+  instead of next to `setup_contrib` itself. Must already exist.
 
 The script will:
 
@@ -77,8 +79,11 @@ The requested contrib module is already enabled.
 When you're finished, remove the test environment and its files:
 
 ```bash
-./dispose_contrib --m=webform
+./dispose_contrib --mn=webform
 ```
+
+If you ran `setup_contrib` with `--dir`, pass the same `--dir` here too, so
+`dispose_contrib` can find the module directory.
 
 You'll be asked to type `webform` again to confirm. The script then removes
 the DDEV project and the module's files.
