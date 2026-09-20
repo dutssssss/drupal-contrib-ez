@@ -17,9 +17,16 @@ you have a working site:
 `setup_contrib` runs through those steps in order, so you don't have to do
 them by hand each time you set up a new module.
 
-The site install itself is Drupal's standard install profile, the same one
-`drush site:install` defaults to on a fresh site: no custom profile, no
-recipes, just the usual out-of-the-box content types, views, and blocks.
+The site install itself uses Drupal's standard install profile by default,
+the same one `drush site:install` defaults to on a fresh site: no custom
+profile, no recipes, just the usual out-of-the-box content types, views, and
+blocks. Pass `--profile=<name>` for a different profile, e.g. `minimal`,
+which recipe-based setups often expect.
+
+`overrides/<module>/recipes.txt` layers recipes on top of that install, for
+setups that need more than a plain module enable, e.g. a Drupal CMS site
+template. Each package listed there is composer-required and then applied
+with `drush recipe`, rather than `pm:enable`d.
 
 `setup_contrib` and `dispose_contrib` treat the folder they're sitting in as
 your contrib workspace. Every module ends up next to them:

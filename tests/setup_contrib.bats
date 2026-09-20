@@ -8,6 +8,7 @@
 setup() {
   TEST_DIR="$(mktemp -d)"
   cp "$BATS_TEST_DIRNAME/../setup_contrib" "$TEST_DIR/setup_contrib"
+  cp "$BATS_TEST_DIRNAME/../_lib.sh" "$TEST_DIR/_lib.sh"
   chmod +x "$TEST_DIR/setup_contrib"
 }
 
@@ -346,4 +347,87 @@ STUB
 
   [ "$status" -eq 0 ]
   grep -qF "add-on get https://github.com/tormi/ddev-drupal-contrib/tarball/GH-177" "$ddev_log"
+}
+
+@test "--profile is passed to site:install, defaulting to standard" {
+  local fake_bin="$TEST_DIR/fake_bin"
+  local ddev_log="$TEST_DIR/ddev.log"
+  mkdir -p "$fake_bin" "$TEST_DIR/workspace/my_module/.ddev"
+  echo "DRUPAL_CORE=^11.2" > "$TEST_DIR/workspace/my_module/.ddev/.env.web"
+
+  cat > "$fake_bin/git" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+  cat > "$fake_bin/ddev" <<STUB
+#!/usr/bin/env bash
+echo "ddev \$*" >> "$ddev_log"
+exit 0
+STUB
+  chmod +x "$fake_bin/git" "$fake_bin/ddev"
+
+  PATH="$fake_bin:/usr/bin:/bin" run "$TEST_DIR/setup_contrib" --mn=my_module --dir="$TEST_DIR/workspace"
+  [ "$status" -eq 0 ]
+  grep -qF "site:install standard" "$ddev_log"
+
+  : > "$ddev_log"
+  PATH="$fake_bin:/usr/bin:/bin" run "$TEST_DIR/setup_contrib" --mn=my_module --dir="$TEST_DIR/workspace" --profile=minimal
+  [ "$status" -eq 0 ]
+  grep -qF "site:install minimal" "$ddev_log"
+}
+
+@test "recipes.txt: packages are required and applied with drush recipe, not pm:enable" {
+  local fake_bin="$TEST_DIR/fake_bin"
+  local ddev_log="$TEST_DIR/ddev.log"
+  mkdir -p "$fake_bin" "$TEST_DIR/workspace/my_module/.ddev" "$TEST_DIR/overrides/my_module"
+  echo "DRUPAL_CORE=^11.2" > "$TEST_DIR/workspace/my_module/.ddev/.env.web"
+
+  cat > "$fake_bin/git" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+  cat > "$fake_bin/ddev" <<STUB
+#!/usr/bin/env bash
+echo "ddev \$*" >> "$ddev_log"
+exit 0
+STUB
+  chmod +x "$fake_bin/git" "$fake_bin/ddev"
+
+  cat > "$TEST_DIR/overrides/my_module/recipes.txt" <<'LIST'
+drupal/byte
+LIST
+
+  PATH="$fake_bin:/usr/bin:/bin" run "$TEST_DIR/setup_contrib" --mn=my_module --si --dir="$TEST_DIR/workspace"
+
+  [ "$status" -eq 0 ]
+  grep -qF "composer require --no-update --quiet drupal/byte --no-interaction" "$ddev_log"
+  grep -qF "drush recipe ../recipes/byte -y" "$ddev_log"
+  ! grep -qF "pm:enable byte" "$ddev_log"
+}
+
+@test "recipes.txt is applied on a --si rerun, and coexists with other-modules.txt" {
+  local fake_bin="$TEST_DIR/fake_bin"
+  local ddev_log="$TEST_DIR/ddev.log"
+  mkdir -p "$fake_bin" "$TEST_DIR/workspace/my_module/.ddev" "$TEST_DIR/overrides/my_module"
+  echo "DRUPAL_CORE=^11.2" > "$TEST_DIR/workspace/my_module/.ddev/.env.web"
+
+  cat > "$fake_bin/git" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+  cat > "$fake_bin/ddev" <<STUB
+#!/usr/bin/env bash
+echo "ddev \$*" >> "$ddev_log"
+exit 0
+STUB
+  chmod +x "$fake_bin/git" "$fake_bin/ddev"
+
+  echo "drupal/ai_provider_openai" > "$TEST_DIR/overrides/my_module/other-modules.txt"
+  echo "drupal/byte" > "$TEST_DIR/overrides/my_module/recipes.txt"
+
+  PATH="$fake_bin:/usr/bin:/bin" run "$TEST_DIR/setup_contrib" --mn=my_module --si --dir="$TEST_DIR/workspace"
+
+  [ "$status" -eq 0 ]
+  grep -qF "pm:enable ai_provider_openai -y" "$ddev_log"
+  grep -qF "drush recipe ../recipes/byte -y" "$ddev_log"
 }

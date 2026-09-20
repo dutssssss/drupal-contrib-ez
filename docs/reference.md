@@ -34,6 +34,7 @@ setup_contrib --mn=<name> [--cv=<constraint>] [options]
 | `--si`              | No       | Skip install, skips `drush site:install` and `drush pm:enable`. Use this if you're rerunning against a project that already has a site, since `site:install` would otherwise wipe its database. |
 | `--pn=<name>`       | No       | Project name, the DDEV project name. Defaults to whatever `ddev config` derives from the module directory name. DDEV's project registry is global, not per-directory, so set this if you're checking out the same module more than once and the default name would collide with an existing project. |
 | `--dir=<path>`      | No       | Directory to clone/look for the module in, instead of the directory `setup_contrib` is sitting in. Must already exist. Supports a leading `~`. Only affects where the module's code and DDEV project live, `overrides/` is always read from next to `setup_contrib` itself, see [`overrides/README.md`](../overrides/README.md). |
+| `--profile=<name>`  | No       | Install profile passed to `drush site:install`. Defaults to `standard`. Recipe-based setups, e.g. Drupal CMS site templates, often expect `minimal` instead. |
 
 Rerunning `setup_contrib --mn=<name> --si` against a project that already
 exists (no `--cv` needed) is also how you pick up a new entry added to
@@ -56,6 +57,18 @@ If a guess doesn't match a real module, that one enable is skipped with a
 warning rather than failing the whole run, and you can enable the right
 module yourself. Packages outside the `drupal/` namespace are never treated
 as enable candidates.
+
+Packages listed in `overrides/<module>/recipes.txt` are composer-required
+the same way, but aren't modules, so they're never `pm:enable`'d. Instead,
+each one is applied with `drush recipe ../recipes/<name>` (again using the
+part after `drupal/` as `<name>`), right after `site:install` and *before*
+the main module and `other-modules.txt`'s modules get `pm:enable`'d. A
+recipe can enable modules itself as part of its own dependency graph and
+establish their config canonically; enabling those modules separately
+first and applying the recipe afterward risks the reverse, a module's own
+default config conflicting with the recipe's import. Recipes are designed
+to be applied idempotently, so this step also runs on a `--si` rerun, the
+same "add a line, rerun" workflow described above for `other-modules.txt`.
 
 ## dispose_contrib flags
 

@@ -9,11 +9,13 @@ One folder per module, named after the module directory:
 overrides/
   my_module/
     other-modules.txt     # extra composer packages, picked up automatically
+    recipes.txt           # recipe packages, composer-required and applied with `drush recipe`
     web-build/            # extra .ddev/web-build/ files, copied in before ddev start
 ```
 
-No flag needed, the script checks for `overrides/<module>/other-modules.txt`
-and `overrides/<module>/web-build/` on its own:
+No flag needed, the script checks for `overrides/<module>/other-modules.txt`,
+`overrides/<module>/recipes.txt`, and `overrides/<module>/web-build/` on its
+own:
 
 ```
 setup_contrib --mn=my_module --cv=^11.2
@@ -31,6 +33,19 @@ lines and `#` comments ignored:
 drupal/some_dependency
 drupal/another_dependency:^2.0
 ```
+
+`recipes.txt` is the same plain-list format, but for recipe packages, e.g.
+Drupal CMS site templates:
+
+```
+drupal/byte
+```
+
+Each package is composer-required the same way as `other-modules.txt`, but
+applied with `drush recipe ../recipes/<name>` instead of `pm:enable`, since
+recipes aren't modules, see [`docs/reference.md`](../docs/reference.md) for
+details. Recipes are meant to be reapplied safely, so this also runs on a
+`--si` rerun.
 
 `web-build/` is a folder, not a file: whatever is in it gets copied into
 the project's `.ddev/web-build/` before `ddev start`, so DDEV's own web

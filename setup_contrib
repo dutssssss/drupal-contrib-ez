@@ -32,22 +32,12 @@ Optional:
                      derives from the module directory name.
   --dir=<path>       Directory to clone/look for the module in, instead of
                      next to this script. Must already exist.
+  --profile=<name>   Install profile passed to 'drush site:install'.
+                     Defaults to "standard".
 
-overrides/<module>/other-modules.txt and web-build/ are picked up
-automatically. See docs/reference.md and overrides/README.md for details.
+overrides/<module>/other-modules.txt, recipes.txt, and web-build/ are picked
+up automatically. See docs/reference.md and overrides/README.md for details.
 EOF
-}
-
-# Same literal-string idempotency idiom as the drush and plugin-approval checks
-# below. A blank constraint just checks the package is declared at all.
-requirement_satisfied() {
-  local package="$1" constraint="$2"
-  [[ -f composer.json ]] || return 1
-  if [[ -n "$constraint" ]]; then
-    grep -qF "\"$package\": \"$constraint\"" composer.json
-  else
-    grep -qF "\"$package\":" composer.json
-  fi
 }
 
 # Sets CORE_MAJOR globally so die() here aborts the whole script, not just a subshell.
@@ -80,12 +70,15 @@ main() {
   local addon_source="$DEFAULT_ADDON_SOURCE"
   local project_name=""
   local target_dir=""
+  local profile="standard"
   local addon_source_explicit=false
-  local script_dir contribs_dir module_dir other_modules_file other_webbuild_dir plugin drush_declared requirement
+  local script_dir contribs_dir module_dir other_modules_file other_webbuild_dir recipes_file plugin drush_declared requirement
   local req_package req_constraint
   local env_file env_line other_module_name vendor_existed_before_start
   local webbuild_src webbuild_rel webbuild_dest
+  local recipe_name
   local other_module_names=()
+  local recipe_names=()
 
   for arg in "$@"; do
     case "$arg" in
@@ -95,6 +88,7 @@ main() {
       --si) skip_install=true ;;
       --pn=*) project_name="${arg#--pn=}" ;;
       --dir=*) target_dir="${arg#--dir=}" ;;
+      --profile=*) profile="${arg#--profile=}" ;;
       -h|--help) usage; exit 0 ;;
       *) log "unrecognized argument '$arg'"; usage; exit 2 ;;
     esac
@@ -118,6 +112,7 @@ main() {
   module_dir="$contribs_dir/$module"
   other_modules_file="$script_dir/overrides/$module/other-modules.txt"
   other_webbuild_dir="$script_dir/overrides/$module/web-build"
+  recipes_file="$script_dir/overrides/$module/recipes.txt"
 
   if [[ -z "$core_version" ]]; then
     env_file="$module_dir/.ddev/.env.web"
@@ -217,9 +212,7 @@ main() {
   if [[ -f "$other_modules_file" ]]; then
     log "[$module] adding extra composer dependencies from $other_modules_file"
     while IFS= read -r requirement || [[ -n "$requirement" ]]; do
-      requirement="${requirement%%#*}"
-      requirement="${requirement#"${requirement%%[![:space:]]*}"}"
-      requirement="${requirement%"${requirement##*[![:space:]]}"}"
+      requirement="$(trim_requirement_line "$requirement")"
       [[ -z "$requirement" ]] && continue
 
       req_package="${requirement%%:*}"
@@ -230,7 +223,7 @@ main() {
         log "[$module] $requirement already in composer.json, skipping"
       else
         log "[$module] requiring $requirement"
-        ddev composer require --no-update --quiet "$requirement" --no-interaction
+        ddev composer require --no-update --quiet "$requirement" --no-interaction </dev/null
       fi
 
       if [[ "$requirement" == drupal/* ]]; then
@@ -239,6 +232,28 @@ main() {
         other_module_names+=("$other_module_name")
       fi
     done < "$other_modules_file"
+  fi
+
+  if [[ -f "$recipes_file" ]]; then
+    log "[$module] adding recipe packages from $recipes_file"
+    while IFS= read -r requirement || [[ -n "$requirement" ]]; do
+      requirement="$(trim_requirement_line "$requirement")"
+      [[ -z "$requirement" ]] && continue
+
+      req_package="${requirement%%:*}"
+      req_constraint=""
+      [[ "$requirement" == *:* ]] && req_constraint="${requirement#*:}"
+
+      if requirement_satisfied "$req_package" "$req_constraint"; then
+        log "[$module] $requirement already in composer.json, skipping"
+      else
+        log "[$module] requiring $requirement"
+        ddev composer require --no-update --quiet "$requirement" --no-interaction </dev/null
+      fi
+
+      recipe_name="${req_package#drupal/}"
+      recipe_names+=("$recipe_name")
+    done < "$recipes_file"
   fi
 
   log "[$module] installing dependencies"
@@ -252,12 +267,32 @@ main() {
   ddev config --update
 
   if "$skip_install"; then
-    log "[$module] --si set, leaving existing site install and enabled modules untouched"
+    log "[$module] --si set, leaving existing site install untouched"
   else
-    log "[$module] installing Drupal site"
-    ddev drush site:install standard --site-name="$module" --account-name=admin --account-pass=admin -y
+    log "[$module] installing Drupal site (profile: $profile)"
+    ddev drush site:install "$profile" --site-name="$module" --account-name=admin --account-pass=admin -y
     ddev drush cr
+  fi
 
+  # Recipes are applied before the main module (and other-modules.txt) get
+  # pm:enable'd: a recipe can enable modules itself as part of its own
+  # dependency graph and establish their config canonically, and a later
+  # pm:enable of something the recipe already enabled is a no-op. Applying
+  # recipes after separately pm:enabling those modules risks the reverse:
+  # a module creates its own default config first, then the recipe's import
+  # conflicts with it.
+  if [[ ${#recipe_names[@]} -gt 0 ]]; then
+    log "[$module] applying recipes"
+    for recipe_name in "${recipe_names[@]}"; do
+      log "[$module] applying recipe $recipe_name"
+      # composer/installers puts drupal-recipe packages at the project root
+      # (sibling of web/), but `ddev drush` runs with the docroot as cwd.
+      ddev drush recipe "../recipes/$recipe_name" -y
+    done
+    ddev drush cr
+  fi
+
+  if ! "$skip_install"; then
     log "[$module] enabling module"
     ddev drush pm:enable "$module" -y
     ddev drush cr

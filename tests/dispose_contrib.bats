@@ -6,6 +6,7 @@
 setup() {
   TEST_DIR="$(mktemp -d)"
   cp "$BATS_TEST_DIRNAME/../dispose_contrib" "$TEST_DIR/dispose_contrib"
+  cp "$BATS_TEST_DIRNAME/../_lib.sh" "$TEST_DIR/_lib.sh"
   chmod +x "$TEST_DIR/dispose_contrib"
 }
 
