@@ -182,7 +182,15 @@ main() {
   log "[$module] starting ddev"
   ddev start
 
-  if [[ -f composer.json ]] && grep -qF 'packages.drupal.org' composer.json; then
+  # A freshly cloned contrib module has no composer.json of its own; the
+  # add-on's expand-composer-json only materializes one transiently inside
+  # `ddev poser` (later) and removes it again unless it was already present.
+  # `composer config` (unlike `composer require`) refuses to run without an
+  # existing file, so seed an empty one here the same way expand-composer-json
+  # does; a non-empty file survives that later step and persists for reruns.
+  [[ -f composer.json ]] || echo '{}' > composer.json
+
+  if grep -qF 'packages.drupal.org' composer.json; then
     log "[$module] drupal.org package repository already configured, skipping"
   else
     log "[$module] adding drupal.org package repository"
