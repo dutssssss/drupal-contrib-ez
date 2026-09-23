@@ -4,6 +4,7 @@
 !/LICENSE
 !/setup_contrib
 !/dispose_contrib
+!/setup_cms
 !/_lib.sh
 !/overrides
 !/tests

@@ -70,6 +70,41 @@ default config conflicting with the recipe's import. Recipes are designed
 to be applied idempotently, so this step also runs on a `--si` rerun, the
 same "add a line, rerun" workflow described above for `other-modules.txt`.
 
+## setup_cms flags
+
+```
+setup_cms --mn=<name> [options]
+
+  e.g.: setup_cms --mn=canvas
+        setup_cms --mn=canvas --template=starter --si
+```
+
+| Flag                | Required | Description                                                                                                                              |
+|---------------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| `--mn=<name>`       | Yes      | Name for this environment: the DDEV project/directory name, and the key for `overrides/<name>/`.                                          |
+| `--template=<name>` | No       | Site template recipe to install from, e.g. `byte`, `starter`, `haven`. Defaults to `byte`.                                                 |
+| `--cv=<constraint>` | No       | Version constraint for `drupal/cms` itself, e.g. `^2.1`. Only used the first time; on a rerun the project already exists.                 |
+| `--si`              | No       | Skip `site:install`, for rerunning against a project that already has a site (avoids wiping the DB).                                      |
+| `--pn=<name>`       | No       | DDEV project name. Defaults to whatever `ddev config` derives from the directory name.                                                     |
+| `--dir=<path>`      | No       | Directory to create/look for the project in, instead of next to this script. Must already exist.                                          |
+
+Unlike `setup_contrib`, this doesn't clone a single module's git checkout
+ahead of time — it builds a whole Drupal CMS project from composer packages,
+which is what a site template recipe actually needs (see `--help` output for
+why). Composer's `preferred-install` is forced to `source`, so every package
+it installs — e.g. `web/modules/contrib/canvas` — is still a real git
+checkout with upstream history, not a dist zip, just installed as part of
+the whole-project build rather than cloned up front. This is slower and uses
+more disk than a plain dist install.
+
+`overrides/<name>/other-modules.txt`, `recipes.txt`, and `web-build/` are
+picked up the same way as `setup_contrib`; `recipes.txt` here layers *extra*
+recipes on top of the site template, it isn't the template itself (that's
+`--template`).
+
+Tear down with `dispose_contrib --mn=<name>` (same `--dir` if used) — it
+only cares about the DDEV project and directory, not how they were built.
+
 ## dispose_contrib flags
 
 `dispose_contrib` tears down what `setup_contrib` created: the DDEV project

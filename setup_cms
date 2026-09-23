@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_NAME="${0##*/}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
+
+readonly ALLOWED_PLUGINS=(php-http/discovery tbachert/spi phpstan/extension-installer symfony/runtime drupal/core-composer-scaffold composer/installers dealerdirect/phpcodesniffer-composer-installer cweagans/composer-patches)
+readonly DEFAULT_TEMPLATE="byte"
+
+usage() {
+  cat >&2 <<EOF
+Usage: $SCRIPT_NAME --mn=<name> [options]
+
+  e.g.: $SCRIPT_NAME --mn=canvas
+        $SCRIPT_NAME --mn=canvas --template=starter --si
+
+Sets up a full Drupal CMS site via 'composer create-project drupal/cms',
+installed straight from a site template recipe (default:
+"$DEFAULT_TEMPLATE"), the same way Drupal CMS's own installer applies one.
+
+Unlike setup_contrib, this doesn't clone a single contrib module's own git
+checkout ahead of time. It builds a whole Drupal CMS project from released,
+version-matched packages, which is what a "site template" recipe (a
+composite recipe with its own demo content) actually needs: applying one as
+a bolt-on 'drush recipe' step after a plain site:install runs into version
+mismatches against unreleased dependencies and ordering conflicts with
+in-use components. Here the site template *is* the install.
+
+Every package composer installs here, e.g. web/modules/contrib/canvas, is
+installed from its git source rather than a dist zip (composer's
+preferred-install is set to "source"), so every package directory is a real
+git checkout with upstream history you can diff/review, not just files.
+This is slower and uses more disk than a normal dist install; that's the
+tradeoff for not having to redo the install to get history when a package
+under here turns out to be the one you need to patch or bisect.
+
+Required:
+  --mn=<name>        Name for this environment: the DDEV project/directory
+                     name, and the key for overrides/<name>/.
+
+Optional:
+  --template=<name>  Site template recipe to install from, e.g. byte,
+                     starter, haven. Defaults to "$DEFAULT_TEMPLATE". Must
+                     match a directory name under recipes/ once 'composer
+                     create-project drupal/cms' has run (rerun with --si
+                     after a failed first attempt to see what's there).
+  --cv=<constraint>  Version constraint for drupal/cms itself, e.g. ^2.1.
+                     Defaults to latest stable. Only used the first time;
+                     on a rerun the project is already created.
+  --si               Skip site:install, for rerunning against a project
+                     that already has a site (avoids wiping the DB).
+  --pn=<name>        DDEV project name. Defaults to whatever 'ddev config'
+                     derives from the directory name.
+  --dir=<path>       Directory to create/look for the project in, instead
+                     of next to this script. Must already exist.
+
+overrides/<name>/other-modules.txt, recipes.txt, and web-build/ are picked
+up automatically, same as setup_contrib. recipes.txt here is for EXTRA
+recipes layered on *after* the site template install, not the template
+itself, that's --template.
+
+Tear down with dispose_contrib --mn=<name> (same --dir if you passed one)
+- it only cares about the DDEV project and directory, not how they were
+built, so it works for this too.
+EOF
+}
+
+main() {
+  local skip_install=false
+  local name=""
+  local template="$DEFAULT_TEMPLATE"
+  local cms_version=""
+  local project_name=""
+  local target_dir=""
+  local script_dir contribs_dir project_dir other_modules_file other_webbuild_dir recipes_file plugin requirement
+  local req_package req_constraint create_project available
+  local other_module_name webbuild_src webbuild_rel webbuild_dest recipe_name
+  local other_module_names=()
+  local recipe_names=()
+
+  for arg in "$@"; do
+    case "$arg" in
+      --mn=*) name="${arg#--mn=}" ;;
+      --template=*) template="${arg#--template=}" ;;
+      --cv=*) cms_version="${arg#--cv=}" ;;
+      --si) skip_install=true ;;
+      --pn=*) project_name="${arg#--pn=}" ;;
+      --dir=*) target_dir="${arg#--dir=}" ;;
+      -h|--help) usage; exit 0 ;;
+      *) log "unrecognized argument '$arg'"; usage; exit 2 ;;
+    esac
+  done
+
+  [[ -n "$name" ]] || { log "--mn is required"; usage; exit 2; }
+  validate_machine_name "--mn" "$name"
+
+  if [[ -n "$target_dir" ]]; then
+    target_dir="$(expand_tilde "$target_dir")"
+    [[ -d "$target_dir" ]] || die "$target_dir does not exist."
+    target_dir="$(cd "$target_dir" && pwd)"
+  fi
+
+  script_dir="$SCRIPT_DIR"
+  if [[ -n "$target_dir" ]]; then
+    contribs_dir="$target_dir"
+  else
+    contribs_dir="$script_dir"
+  fi
+  project_dir="$contribs_dir/$name"
+  other_modules_file="$script_dir/overrides/$name/other-modules.txt"
+  other_webbuild_dir="$script_dir/overrides/$name/web-build"
+  recipes_file="$script_dir/overrides/$name/recipes.txt"
+
+  require_cmd ddev
+
+  if [[ -f "$project_dir/composer.json" ]]; then
+    log "[$name] $project_dir already has a composer.json, skipping composer create-project (rerun)"
+    create_project=false
+  else
+    log "[$name] creating $project_dir"
+    mkdir -p "$project_dir"
+    create_project=true
+  fi
+
+  cd "$project_dir"
+
+  log "[$name] ddev config"
+  if [[ -n "$project_name" ]]; then
+    ddev config --project-type=drupal11 --docroot=web --project-name="$project_name"
+  else
+    ddev config --project-type=drupal11 --docroot=web
+  fi
+
+  if [[ -d "$other_webbuild_dir" ]]; then
+    mkdir -p .ddev/web-build
+    while IFS= read -r -d '' webbuild_src; do
+      webbuild_rel="${webbuild_src#"$other_webbuild_dir"/}"
+      webbuild_dest=".ddev/web-build/$webbuild_rel"
+      if [[ -f "$webbuild_dest" ]] && cmp -s "$webbuild_src" "$webbuild_dest"; then
+        continue
+      fi
+      log "[$name] copying web-build file $webbuild_rel from $other_webbuild_dir"
+      mkdir -p "$(dirname "$webbuild_dest")"
+      cp -p "$webbuild_src" "$webbuild_dest"
+    done < <(find "$other_webbuild_dir" -type f -print0)
+  fi
+
+  log "[$name] starting ddev"
+  ddev start
+
+  if "$create_project"; then
+    log "[$name] creating Drupal CMS project from source (composer create-project --prefer-source drupal/cms${cms_version:+:$cms_version})"
+    ddev composer create-project --prefer-source "drupal/cms${cms_version:+:$cms_version}"
+  else
+    log "[$name] project already created, skipping"
+  fi
+
+  log "[$name] ensuring composer installs from source (git) by default"
+  ddev composer config preferred-install source
+
+  if grep -qF 'packages.drupal.org' composer.json; then
+    log "[$name] drupal.org package repository already configured, skipping"
+  else
+    log "[$name] adding drupal.org package repository"
+    ddev composer config repositories.drupal composer https://packages.drupal.org/8
+  fi
+
+  log "[$name] pre-approving composer plugins"
+  for plugin in "${ALLOWED_PLUGINS[@]}"; do
+    if grep -qF "\"$plugin\": true" composer.json; then
+      continue
+    fi
+    ddev composer config "allow-plugins.$plugin" true
+  done
+
+  if "$skip_install"; then
+    log "[$name] --si set, leaving existing site install untouched"
+  else
+    if [[ ! -d "recipes/$template" ]]; then
+      available="$(find recipes -mindepth 1 -maxdepth 1 -type d -printf '%f ' 2>/dev/null)"
+      die "recipes/$template not found after composer create-project. Available: $available"
+    fi
+    log "[$name] installing Drupal CMS from the '$template' site template"
+    ddev drush site:install "../recipes/$template" --account-name=admin --account-pass=admin --site-name="$name" -y
+    ddev drush cr
+  fi
+
+  if [[ -f "$other_modules_file" ]]; then
+    log "[$name] adding extra composer dependencies from $other_modules_file"
+    while IFS= read -r requirement || [[ -n "$requirement" ]]; do
+      requirement="$(trim_requirement_line "$requirement")"
+      [[ -z "$requirement" ]] && continue
+
+      req_package="${requirement%%:*}"
+      req_constraint=""
+      [[ "$requirement" == *:* ]] && req_constraint="${requirement#*:}"
+
+      if requirement_satisfied "$req_package" "$req_constraint"; then
+        log "[$name] $requirement already in composer.json, skipping"
+      else
+        log "[$name] requiring $requirement"
+        ddev composer require --quiet "$requirement" --no-interaction </dev/null
+      fi
+
+      if [[ "$requirement" == drupal/* ]]; then
+        other_module_name="${requirement#drupal/}"
+        other_module_name="${other_module_name%%:*}"
+        other_module_names+=("$other_module_name")
+      fi
+    done < "$other_modules_file"
+  fi
+
+  if [[ -f "$recipes_file" ]]; then
+    log "[$name] adding recipe packages from $recipes_file"
+    while IFS= read -r requirement || [[ -n "$requirement" ]]; do
+      requirement="$(trim_requirement_line "$requirement")"
+      [[ -z "$requirement" ]] && continue
+
+      req_package="${requirement%%:*}"
+      req_constraint=""
+      [[ "$requirement" == *:* ]] && req_constraint="${requirement#*:}"
+
+      if requirement_satisfied "$req_package" "$req_constraint"; then
+        log "[$name] $requirement already in composer.json, skipping"
+      else
+        log "[$name] requiring $requirement"
+        ddev composer require --quiet "$requirement" --no-interaction </dev/null
+      fi
+
+      recipe_name="${req_package#drupal/}"
+      recipe_names+=("$recipe_name")
+    done < "$recipes_file"
+  fi
+
+  if [[ ${#recipe_names[@]} -gt 0 ]]; then
+    log "[$name] applying extra recipes"
+    for recipe_name in "${recipe_names[@]}"; do
+      log "[$name] applying recipe $recipe_name"
+      ddev drush recipe "../recipes/$recipe_name" -y
+    done
+    ddev drush cr
+  fi
+
+  if [[ ${#other_module_names[@]} -gt 0 ]]; then
+    log "[$name] enabling modules from other-modules.txt"
+    for other_module_name in "${other_module_names[@]}"; do
+      ddev drush pm:enable "$other_module_name" -y \
+        || log "[$name] could not enable '$other_module_name' (machine name may not match the composer package, or it's not a module), skipping"
+    done
+    ddev drush cr
+  fi
+
+  log "[$name] done"
+  ddev describe
+}
+
+main "$@"
