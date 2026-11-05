@@ -72,7 +72,7 @@ main() {
   local target_dir=""
   local profile="standard"
   local addon_source_explicit=false
-  local script_dir contribs_dir module_dir other_modules_file other_webbuild_dir recipes_file plugin drush_declared requirement
+  local script_dir contribs_dir module_dir other_modules_file other_webbuild_dir recipes_file plugin requirement
   local req_package req_constraint
   local env_file env_line other_module_name vendor_existed_before_start
   local webbuild_src webbuild_rel webbuild_dest
@@ -205,12 +205,7 @@ main() {
     ddev composer config "allow-plugins.$plugin" true
   done
 
-  drush_declared=false
-  if [[ -f composer.json ]] && grep -q '"drush/drush"' composer.json; then
-    drush_declared=true
-  fi
-
-  if "$drush_declared"; then
+  if requirement_satisfied drush/drush ""; then
     log "[$module] drush/drush already declared in composer.json, leaving it to ddev poser"
   else
     log "[$module] adding drush:$DRUSH_CONSTRAINT to require-dev (resolved together by ddev poser)"

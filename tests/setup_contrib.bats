@@ -10,6 +10,8 @@ setup() {
   cp "$BATS_TEST_DIRNAME/../setup_contrib" "$TEST_DIR/setup_contrib"
   cp "$BATS_TEST_DIRNAME/../_lib.sh" "$TEST_DIR/_lib.sh"
   chmod +x "$TEST_DIR/setup_contrib"
+  # Stubs run with a stripped PATH, so resolve the host php up front.
+  HOST_PHP="$(command -v php || true)"
 }
 
 teardown() {
@@ -119,6 +121,13 @@ STUB
   cat > "$fake_bin/ddev" <<STUB
 #!/usr/bin/env bash
 echo "ddev \$*" >> "$ddev_log"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
 if [[ "\$*" == *"pm:enable broken_guess"* ]]; then
   exit 1
 fi
@@ -157,6 +166,13 @@ STUB
   cat > "$fake_bin/ddev" <<STUB
 #!/usr/bin/env bash
 echo "ddev \$*" >> "$ddev_log"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
 exit 0
 STUB
   chmod +x "$fake_bin/git" "$fake_bin/ddev"
@@ -310,6 +326,13 @@ STUB
   cat > "$fake_bin/ddev" <<STUB
 #!/usr/bin/env bash
 echo "ddev \$*" >> "$ddev_log"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
 exit 0
 STUB
   chmod +x "$fake_bin/git" "$fake_bin/ddev"
@@ -338,6 +361,13 @@ STUB
   cat > "$fake_bin/ddev" <<STUB
 #!/usr/bin/env bash
 echo "ddev \$*" >> "$ddev_log"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
 exit 0
 STUB
   chmod +x "$fake_bin/git" "$fake_bin/ddev"
@@ -362,6 +392,13 @@ STUB
   cat > "$fake_bin/ddev" <<STUB
 #!/usr/bin/env bash
 echo "ddev \$*" >> "$ddev_log"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
 exit 0
 STUB
   chmod +x "$fake_bin/git" "$fake_bin/ddev"
@@ -389,6 +426,13 @@ STUB
   cat > "$fake_bin/ddev" <<STUB
 #!/usr/bin/env bash
 echo "ddev \$*" >> "$ddev_log"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
 exit 0
 STUB
   chmod +x "$fake_bin/git" "$fake_bin/ddev"
@@ -418,6 +462,13 @@ STUB
   cat > "$fake_bin/ddev" <<STUB
 #!/usr/bin/env bash
 echo "ddev \$*" >> "$ddev_log"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
 exit 0
 STUB
   chmod +x "$fake_bin/git" "$fake_bin/ddev"
@@ -430,4 +481,66 @@ STUB
   [ "$status" -eq 0 ]
   grep -qF "pm:enable ai_provider_openai -y" "$ddev_log"
   grep -qF "drush recipe ../recipes/byte -y" "$ddev_log"
+}
+
+drush_check_run() {
+  local composer_json="$1"
+  local fake_bin="$TEST_DIR/fake_bin"
+  local mod="$TEST_DIR/workspace/my_module"
+  DDEV_LOG="$TEST_DIR/ddev.log"
+  mkdir -p "$fake_bin" "$mod/.ddev"
+  echo "DRUPAL_CORE=^11.2" > "$mod/.ddev/.env.web"
+  printf '%s\n' "$composer_json" > "$mod/composer.json"
+
+  cat > "$fake_bin/git" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+  cat > "$fake_bin/ddev" <<STUB
+#!/usr/bin/env bash
+echo "ddev \$*" >> "$DDEV_LOG"
+# requirement_satisfied's composer.json check runs via the host's real php;
+# with no php it reports "not declared", so the require still happens.
+if [[ "\$1 \$2 \$3 \$4" == "exec --raw -- php" ]]; then
+  shift 4
+  [[ -n "$HOST_PHP" ]] && exec "$HOST_PHP" "\$@"
+  exit 1
+fi
+exit 0
+STUB
+  chmod +x "$fake_bin/git" "$fake_bin/ddev"
+
+  PATH="$fake_bin:/usr/bin:/bin" run "$TEST_DIR/setup_contrib" --mn=my_module --si --dir="$TEST_DIR/workspace"
+}
+
+@test "drush only listed under conflict is not treated as declared" {
+  drush_check_run '{"conflict": {"drush/drush": "<12.5.1"}}'
+
+  [ "$status" -eq 0 ]
+  grep -qF 'composer require --dev --no-update --quiet drush/drush:^13' "$DDEV_LOG"
+}
+
+@test "drush already in require-dev is left to ddev poser" {
+  [[ -n "$HOST_PHP" ]] || skip "php not on PATH"
+  drush_check_run '{"require-dev": {"drush/drush": "^13"}}'
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"drush/drush already declared"* ]]
+  ! grep -qF 'drush/drush:^13' "$DDEV_LOG"
+}
+
+@test "other-modules.txt: only an exact require/require-dev match is skipped, not a conflict entry" {
+  [[ -n "$HOST_PHP" ]] || skip "php not on PATH"
+  mkdir -p "$TEST_DIR/overrides/my_module"
+  cat > "$TEST_DIR/overrides/my_module/other-modules.txt" <<'LIST'
+drupal/in_conflict
+drupal/in_require:^2.0
+drupal/other_constraint:^3.0
+LIST
+  drush_check_run '{"require": {"drupal/in_require": "^2.0", "drupal/other_constraint": "^2.0"}, "conflict": {"drupal/in_conflict": "<1.0"}}'
+
+  [ "$status" -eq 0 ]
+  grep -qF "composer require --no-update --quiet drupal/in_conflict --no-interaction" "$DDEV_LOG"
+  ! grep -qF "composer require --no-update --quiet drupal/in_require" "$DDEV_LOG"
+  grep -qF "composer require --no-update --quiet drupal/other_constraint:^3.0 --no-interaction" "$DDEV_LOG"
 }

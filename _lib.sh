@@ -45,15 +45,24 @@ trim_requirement_line() {
   printf '%s' "$line"
 }
 
-# Same literal-string idempotency idiom as the drush and plugin-approval
-# checks in setup_contrib. A blank constraint just checks the package is
-# declared at all. Must be run from the project directory (composer.json).
+# Whether composer.json declares a package under require or require-dev,
+# optionally with exactly that constraint. Only those two sections count: a
+# plain grep also matches "conflict" entries (entity_reference_revisions has
+# "drush/drush": "<12.5.1"), which would wrongly skip the require. Parsed with
+# the container's PHP so the host needs no JSON tool; --raw stops ddev
+# re-running it through bash, which would expand the PHP $vars. Must be run
+# from the project directory (composer.json) after `ddev start`.
 requirement_satisfied() {
   local package="$1" constraint="$2"
   [[ -f composer.json ]] || return 1
-  if [[ -n "$constraint" ]]; then
-    grep -qF "\"$package\": \"$constraint\"" composer.json
-  else
-    grep -qF "\"$package\":" composer.json
-  fi
+  # shellcheck disable=SC2016 # PHP code, $vars must not expand
+  ddev exec --raw -- php -r '
+    $j = json_decode(file_get_contents("composer.json"), true);
+    foreach (["require", "require-dev"] as $section) {
+      if (isset($j[$section][$argv[1]]) && ($argv[2] === "" || $j[$section][$argv[1]] === $argv[2])) {
+        exit(0);
+      }
+    }
+    exit(1);
+  ' "$package" "$constraint" >/dev/null 2>&1
 }
